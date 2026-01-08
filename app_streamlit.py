@@ -11,8 +11,6 @@ import requests
 import urllib.request
 import pandas as pd
 import warnings
-import textwrap
-import re
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_gsheets import GSheetsConnection
@@ -36,7 +34,7 @@ cloudinary.config(
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # =================================================================
-# 2. ĐỊNH NGHĨA CÁC LỚP MÔ HÌNH
+# 2. ĐỊNH NGHĨA CÁC LỚP MÔ HÌNH (GỘP CBAM & EFFICIENTNET)
 # =================================================================
 
 class HybridSegmentation(nn.Module):
@@ -45,7 +43,9 @@ class HybridSegmentation(nn.Module):
         self.unet, self.deeplab = unet, deeplab
     def forward(self, x):
         with torch.no_grad():
-            return torch.max(torch.sigmoid(self.unet(x)), torch.sigmoid(self.deeplab(x)))
+            p1 = torch.sigmoid(self.unet(x))
+            p2 = torch.sigmoid(self.deeplab(x))
+            return torch.max(p1, p2)
 
 class CBAM(nn.Module):
     def __init__(self, in_channels, reduction=16):
@@ -63,7 +63,9 @@ class CBAM(nn.Module):
         )
     def forward(self, x):
         x = x * self.ca(x)
-        return x * self.sa(torch.cat([torch.mean(x,1,True), torch.max(x,1,True)[0]], 1))
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        return x * self.sa(torch.cat([avg_out, max_out], dim=1))
 
 class EfficientNetWithAttention(nn.Module):
     def __init__(self, num_classes):
@@ -82,7 +84,7 @@ class EfficientNetWithAttention(nn.Module):
         return self.classifier(self.attention(x))
 
 # =================================================================
-# 3. HÀM TẢI MÔ HÌNH VÀ TÀI NGUYÊN
+# 3. HÀM TẢI & NẠP MÔ HÌNH (GỘP CHUNG CHO AN TOÀN)
 # =================================================================
 
 @st.cache_resource
@@ -90,21 +92,35 @@ def load_all_models():
     import segmentation_models_pytorch as smp
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Load Models
-    u_net = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
-    u_net.load_state_dict(torch.load("unet_best.pth", map_location=device, weights_only=False)["model_state_dict"])
-    
-    d_lab = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
-    d_lab.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device, weights_only=False)["model_state_dict"])
-    
-    hybrid = HybridSegmentation(u_net, d_lab).to(device).eval()
+    # --- TẢI FILE TỪ HUGGING FACE ---
+    HF_BASE = "https://huggingface.co/nthg0609/doan-dalieu/resolve/main"
+    MODELS_FILE = {
+        "unet_best.pth": f"{HF_BASE}/unet_best.pth",
+        "deeplabv3plus_best.pth": f"{HF_BASE}/deeplabv3plus_best.pth",
+        "efficientnet_attention_best.pth": f"{HF_BASE}/efficientnet_attention_best.pth"
+    }
 
+    for name, url in MODELS_FILE.items():
+        if not os.path.exists(name) or os.path.getsize(name) < 1000000:
+            with st.spinner(f"Đang tải {name}..."):
+                urllib.request.urlretrieve(url, name)
+
+    # --- NẠP MÔ HÌNH VÀO RAM ---
+    # 1. Load Segmentation
+    unet = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
+    unet.load_state_dict(torch.load("unet_best.pth", map_location=device)["model_state_dict"])
+    
+    deeplab = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
+    deeplab.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device)["model_state_dict"])
+    
+    hybrid = HybridSegmentation(unet, deeplab).to(device).eval()
+
+    # 2. Load Classification
     with open("06_classification_complete.json", "r") as f: cls_ckpt = json.load(f)
     num_classes = cls_ckpt["config"]["num_classes"]
     cls_model = EfficientNetWithAttention(num_classes).to(device)
-    state = torch.load("efficientnet_attention_best.pth", map_location=device, weights_only=False)
     
-    # Xử lý tên lớp và load weights
+    state = torch.load("efficientnet_attention_best.pth", map_location=device)
     weights = state['model_state_dict'] if 'model_state_dict' in state else state
     new_weights = {k.replace('module.', ''): v for k, v in weights.items()}
     cls_model.load_state_dict(new_weights, strict=False)
@@ -112,7 +128,7 @@ def load_all_models():
     
     idx_to_class = {v: k for k, v in (state.get("class_to_idx") or cls_ckpt.get("class_to_idx")).items()}
     
-    # Load Fonts cho PDF
+    # 3. Font Tiếng Việt
     os.makedirs("fonts", exist_ok=True)
     f_reg = "fonts/NotoSans-Regular.ttf"
     if not os.path.exists(f_reg):
@@ -123,7 +139,7 @@ def load_all_models():
 hybrid, cls_model, idx_to_class, device, FONT_PATH = load_all_models()
 
 # =================================================================
-# 4. LOGIC XỬ LÝ AI
+# 4. LOGIC CHẨN ĐOÁN AI (ĐỒNG BỘ ACCURACY)
 # =================================================================
 
 def run_inference(image, patient_name, age, gender, note):
@@ -131,7 +147,7 @@ def run_inference(image, patient_name, age, gender, note):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     h_orig, w_orig = image.shape[:2]
     
-    # 1. AI Process (Segmentation)
+    # Step 1: Segmentation
     img_input = cv2.resize(image, (256, 256)).astype(np.float32)/255.0
     img_input = (img_input - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
     tensor = torch.from_numpy(img_input).permute(2, 0, 1).unsqueeze(0).to(device).float()
@@ -142,7 +158,7 @@ def run_inference(image, patient_name, age, gender, note):
     mask_resized = cv2.resize(mask, (w_orig, h_orig))
     mask_binary = (mask_resized > 0.5).astype(np.uint8) * 255
     
-    # --- CẢI TIẾN ROI THÔNG MINH ---
+    # Step 2: ROI Extraction (Smart)
     contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
         c = max(contours, key=cv2.contourArea)
@@ -151,30 +167,33 @@ def run_inference(image, patient_name, age, gender, note):
         x1, y1 = max(0, x - pad_w), max(0, y - pad_h)
         x2, y2 = min(w_orig, x + w + pad_w), min(h_orig, y + h + pad_h)
         roi = image[y1:y2, x1:x2]
-    else:
-        roi = image
-    roi_resized = cv2.resize(roi, (224, 224))
+    else: roi = image
+    roi = cv2.resize(roi, (224, 224))
 
-    # 2. Classification
-    roi_t = torch.from_numpy((roi_resized.astype(np.float32)/255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]).permute(2,0,1).unsqueeze(0).to(device).float()
+    # Step 3: Classification
+    roi_input = roi.astype(np.float32)/255.0
+    roi_input = (roi_input - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+    roi_t = torch.from_numpy(roi_input).permute(2, 0, 1).unsqueeze(0).to(device).float()
+    
     with torch.no_grad():
         probs = torch.softmax(cls_model(roi_t), 1).cpu().numpy()[0]
     label, conf = idx_to_class[np.argmax(probs)], probs[np.argmax(probs)]
 
-    # 3. Cloud Sync
-    def upload_cv2(img_np, tag):
+    # Step 4: Visualization
+    overlay = cv2.addWeighted(image, 0.7, cv2.cvtColor(cv2.applyColorMap(np.uint8(255*mask_resized), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB), 0.3, 0)
+    mask_vis = cv2.cvtColor(mask_binary, cv2.COLOR_GRAY2RGB)
+
+    # Step 5: Cloud Sync
+    def up_cv2(img_np, tag):
         _, buf = cv2.imencode('.jpg', cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
         return cloudinary.uploader.upload(buf.tobytes(), folder="skin_app", public_id=f"{record_id}_{tag}")['secure_url']
 
-    overlay = cv2.addWeighted(image, 0.7, cv2.cvtColor(cv2.applyColorMap(np.uint8(255*mask_resized), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB), 0.3, 0)
-    mask_vis = cv2.cvtColor(mask_binary, cv2.COLOR_GRAY2RGB)
-    
-    with st.spinner("Đang lưu trữ dữ liệu..."):
-        urls = [upload_cv2(image, "orig"), upload_cv2(overlay, "ov"), upload_cv2(mask_vis, "mask")]
+    with st.spinner("Đang đồng bộ đám mây..."):
+        urls = [up_cv2(image, "orig"), up_cv2(overlay, "ov"), up_cv2(mask_vis, "mask")]
 
-    # 4. Save GSheets
+    # Step 6: Save GSheets
     data_row = pd.DataFrame([{
-        "record_id": record_id, "timestamp": timestamp, "name": patient_name, "age": age, 
+        "record_id": record_id, "timestamp": timestamp, "name": patient_name, "age": int(age), 
         "gender": gender, "note": note, "diagnosis": label, "confidence": float(conf),
         "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]
     }])
@@ -184,92 +203,83 @@ def run_inference(image, patient_name, age, gender, note):
     except:
         conn.update(worksheet="Sheet1", data=data_row)
 
-    info = f"**ID:** {record_id}  \n**Chẩn đoán:** {label} ({conf*100:.2f}%)  \n**Bệnh nhân:** {patient_name}"
-    return overlay, mask_vis, info, record_id
+    return overlay, mask_vis, label, conf, record_id
 
 # =================================================================
-# 5. XUẤT BÁO CÁO PDF (3 ẢNH)
+# 5. XUẤT BÁO CÁO PDF (CHUYÊN NGHIỆP 3 ẢNH)
 # =================================================================
 
 def export_patient_pdf(record_id):
     try:
         df = conn.read(worksheet="Sheet1")
         r = df[df['record_id'] == record_id].iloc[0]
-        
-        # A4 DPI 150
-        W, H = 1240, 1754
-        margin = 80
+        W, H = 1240, 1754 # A4
         page = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(page)
-        font = ImageFont.truetype(FONT_PATH, 40)
-        font_bold = ImageFont.truetype(FONT_PATH, 55)
+        f_title = ImageFont.truetype(FONT_PATH, 55)
+        f_text = ImageFont.truetype(FONT_PATH, 38)
 
-        # Header
-        draw.text((W//2 - 350, 100), "BÁO CÁO CHẨN ĐOÁN DA LIỄU AI", fill=(20, 60, 120), font=font_bold)
-        draw.line((margin, 180, W-margin, 180), fill=(200, 200, 200), width=3)
+        draw.text((W//2-380, 100), "BÁO CÁO CHẨN ĐOÁN DA LIỄU AI", fill=(20,60,120), font=f_title)
+        draw.line((80, 180, 1160, 180), fill=(200,200,200), width=3)
 
-        # Info
-        info_y = 220
-        fields = [f"ID Bệnh án: {r['record_id']}", f"Bệnh nhân: {r['name']}", f"Tuổi/Giới tính: {r['age']} / {r['gender']}", 
-                  f"Thời gian: {r['timestamp']}", f"Chẩn đoán: {r['diagnosis']}", f"Độ tin cậy: {r['confidence']*100:.2f}%"]
-        for f in fields:
-            draw.text((margin, info_y), f, fill=(0, 0, 0), font=font)
-            info_y += 70
+        y = 250
+        lines = [f"ID: {r['record_id']}", f"Bệnh nhân: {r['name']}", f"Tuổi/Giới tính: {r['age']} / {r['gender']}", 
+                 f"Chẩn đoán: {r['diagnosis']}", f"Độ tin cậy: {r['confidence']*100:.2f}%", f"Ghi chú: {r['note']}"]
+        for line in lines:
+            draw.text((100, y), line, fill=(0,0,0), font=f_text)
+            y += 75
 
-        # Images (3 ảnh: Gốc - Overlay - Mask)
-        img_w, img_h = 350, 350
-        def paste_url(url, x, y, cap):
+        # Dàn hàng 3 ảnh
+        img_size = 340
+        def paste_url(url, x_pos, cap):
             img = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
-            img.thumbnail((img_w, img_h))
-            page.paste(img, (x + (img_w - img.size[0])//2, y))
-            draw.text((x + 20, y + img_h + 20), cap, fill=(100, 100, 100), font=ImageFont.truetype(FONT_PATH, 30))
+            img.thumbnail((img_size, img_size))
+            page.paste(img, (x_pos, 850))
+            draw.text((x_pos, 1200), cap, fill=(100,100,100), font=ImageFont.truetype(FONT_PATH, 28))
 
-        paste_url(r['url_orig'], margin, 850, "Ảnh tổn thương gốc")
-        paste_url(r['url_ov'], margin + 380, 850, "Ảnh phân vùng AI")
-        paste_url(r['url_mask'], margin + 760, 850, "Mặt nạ phân đoạn")
+        paste_url(r['url_orig'], 80, "Ảnh gốc")
+        paste_url(r['url_ov'], 450, "Ảnh phân vùng")
+        paste_url(r['url_mask'], 820, "Mặt nạ AI")
 
-        # Footer
-        draw.text((W//2 - 200, H - 100), "Hệ thống AI Dermatology", fill=(150, 150, 150), font=font)
-        
-        pdf_buf = BytesIO()
-        page.save(pdf_buf, format="PDF")
-        return pdf_buf.getvalue()
+        buf = BytesIO()
+        page.save(buf, format="PDF")
+        return buf.getvalue()
     except: return None
 
 # =================================================================
-# 6. GIAO DIỆN STREAMLIT
+# 6. GIAO DIỆN CHÍNH
 # =================================================================
 
-st.set_page_config(page_title="Skin AI", layout="wide")
-st.title("🩺 Chẩn đoán bệnh da liễu AI")
+st.set_page_config(page_title="AI Dermatology", layout="wide")
+st.title("🩺 Hệ thống Chẩn đoán bệnh da liễu AI")
 
-t1, t2 = st.tabs(["Chẩn đoán", "Tra cứu"])
+t1, t2 = st.tabs(["Chẩn đoán mới", "Tra cứu dữ liệu"])
 
 with t1:
     up = st.file_uploader("Tải ảnh", type=["jpg", "png", "jpeg"])
-    name = st.text_input("Tên bệnh nhân")
-    age = st.number_input("Tuổi", 0, 120, 25)
-    gen = st.radio("Giới tính", ["Nam", "Nữ"], horizontal=True)
-    note = st.text_area("Ghi chú")
-    if st.button("Bắt đầu AI"):
+    c1, c2 = st.columns(2)
+    name = c1.text_input("Tên bệnh nhân")
+    age = c2.number_input("Tuổi", 0, 120, 25)
+    gen = c1.radio("Giới tính", ["Nam", "Nữ"], horizontal=True)
+    note = st.text_area("Ghi chú lâm sàng")
+    
+    if st.button("Tiến hành AI Analysis"):
         if up and name:
             img = np.array(Image.open(up).convert("RGB"))
-            with st.spinner("AI đang tính toán..."):
-                ov, mk, info, rid = run_inference(img, name, age, gen, note)
+            with st.spinner("AI đang phân tích..."):
+                ov, mk, lbl, cf, rid = run_inference(img, name, age, gen, note)
                 st.image(ov, use_container_width=True)
-                st.success(info)
-                st.download_button("📥 Tải báo cáo PDF", export_patient_pdf(rid), f"BA_{rid}.pdf")
+                st.info(f"**Kết quả:** {lbl} ({cf*100:.2f}%)")
+                st.download_button("📥 Tải báo cáo PDF", export_patient_pdf(rid), f"BaoCao_{rid}.pdf")
+        else: st.warning("Vui lòng điền đủ thông tin!")
 
 with t2:
-    sid = st.text_input("Nhập ID bệnh án")
-    if st.button("Xem chi tiết"):
+    sid = st.text_input("Nhập ID bệnh án để tra cứu")
+    if st.button("Tìm kiếm"):
         try:
             df = conn.read(worksheet="Sheet1")
             r = df[df['record_id'] == sid].iloc[0]
-            col1, col2, col3 = st.columns(3)
-            col1.image(r['url_orig'], caption="Ảnh gốc")
-            col2.image(r['url_ov'], caption="AI Overlay")
-            col3.image(r['url_mask'], caption="AI Mask")
+            st.image(r['url_ov'], caption="Kết quả chẩn đoán cũ", use_container_width=True)
             st.info(f"Bệnh nhân: {r['name']} | Chẩn đoán: {r['diagnosis']}")
-            st.download_button("📥 Tải PDF lại", export_patient_pdf(sid), f"BA_{sid}.pdf")
-        except: st.error("Không tìm thấy ID")
+            st.download_button("📥 Tải lại PDF", export_patient_pdf(sid), f"BaoCao_{sid}.pdf")
+        except: st.error("Không tìm thấy ID này trên hệ thống.")
