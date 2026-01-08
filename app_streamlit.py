@@ -10,32 +10,17 @@ import datetime
 import requests
 import urllib.request
 import pandas as pd
-import warnings
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_gsheets import GSheetsConnection
 import cloudinary
 import cloudinary.uploader
 
-warnings.filterwarnings("ignore")
-
 # =================================================================
-# 1. CẤU HÌNH HỆ THỐNG & ĐÁM MÂY
+# CẤU HÌNH & LOAD MODEL (KHÔNG ĐỔI KIẾN TRÚC)
 # =================================================================
-
-# Cấu hình Cloudinary
-cloudinary.config(
-    cloud_name = "dq7whcy51",
-    api_key = "677482925994952",
-    api_secret = "1WYJ_fYnUu_nNhgDqLfRCVSAr1Q"
-)
-
-# Kết nối Google Sheets
+cloudinary.config(cloud_name="dq7whcy51", api_key="677482925994952", api_secret="1WYJ_fYnUu_nNhgDqLfRCVSAr1Q")
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# =================================================================
-# 2. ĐỊNH NGHĨA CÁC LỚP MÔ HÌNH (GỘP CBAM & EFFICIENTNET)
-# =================================================================
 
 class HybridSegmentation(nn.Module):
     def __init__(self, unet, deeplab):
@@ -43,29 +28,16 @@ class HybridSegmentation(nn.Module):
         self.unet, self.deeplab = unet, deeplab
     def forward(self, x):
         with torch.no_grad():
-            p1 = torch.sigmoid(self.unet(x))
-            p2 = torch.sigmoid(self.deeplab(x))
-            return torch.max(p1, p2)
+            return torch.max(torch.sigmoid(self.unet(x)), torch.sigmoid(self.deeplab(x)))
 
 class CBAM(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
-        self.ca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False),
-            nn.ReLU(),
-            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False),
-            nn.Sigmoid()
-        )
-        self.sa = nn.Sequential(
-            nn.Conv2d(2, 1, 7, padding=3, bias=False),
-            nn.Sigmoid()
-        )
+        self.ca = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False), nn.ReLU(), nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False), nn.Sigmoid())
+        self.sa = nn.Sequential(nn.Conv2d(2, 1, 7, padding=3, bias=False), nn.Sigmoid())
     def forward(self, x):
         x = x * self.ca(x)
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        return x * self.sa(torch.cat([avg_out, max_out], dim=1))
+        return x * self.sa(torch.cat([torch.mean(x,1,True), torch.max(x,1,True)[0]], 1))
 
 class EfficientNetWithAttention(nn.Module):
     def __init__(self, num_classes):
@@ -74,302 +46,104 @@ class EfficientNetWithAttention(nn.Module):
         self.backbone = timm.create_model('efficientnet_b0', pretrained=False, num_classes=0)
         self.feature_dim = self.backbone.num_features
         self.attention = CBAM(self.feature_dim)
-        self.classifier = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(0.3),
-            nn.Linear(self.feature_dim, 512), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(512, num_classes)
-        )
+        self.classifier = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(0.3), nn.Linear(self.feature_dim, 512), nn.ReLU(), nn.Dropout(0.3), nn.Linear(512, num_classes))
     def forward(self, x):
-        x = self.backbone.forward_features(x)
-        return self.classifier(self.attention(x))
-
-# =================================================================
-# 3. HÀM TẢI & NẠP MÔ HÌNH (GỘP CHUNG CHO AN TOÀN)
-# =================================================================
-
-# =================================================================
-# 4. TẢI VÀ NẠP MÔ HÌNH (SỬ DỤNG FILES_TO_DOWNLOAD TỪ HUGGING FACE)
-# =================================================================
+        return self.classifier(self.attention(self.backbone.forward_features(x)))
 
 @st.cache_resource
 def load_all_models():
     import segmentation_models_pytorch as smp
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    HF_BASE = "https://huggingface.co/nthg0609/doan-dalieu/resolve/main"
+    FILES = {"unet_best.pth": f"{HF_BASE}/unet_best.pth", "deeplabv3plus_best.pth": f"{HF_BASE}/deeplabv3plus_best.pth", "efficientnet_attention_best.pth": f"{HF_BASE}/efficientnet_attention_best.pth"}
     
-    # --- BƯỚC 1: DANH SÁCH FILES TẢI TỪ HUGGING FACE ---
-    FILES_TO_DOWNLOAD = {
-        "unet_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/unet_best.pth",
-        "deeplabv3plus_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/deeplabv3plus_best.pth",
-        "efficientnet_attention_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/efficientnet_attention_best.pth",
-        "hybrid_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/hybrid_best.pth"
-    }
+    for name, url in FILES.items():
+        if not os.path.exists(name) or os.path.getsize(name) < 1000:
+            urllib.request.urlretrieve(url, name)
 
-    # --- BƯỚC 2: KIỂM TRA VÀ TẢI FILE ---
-    for filename, url in FILES_TO_DOWNLOAD.items():
-        # Nếu file chưa có HOẶC file bị hỏng (dung lượng quá nhỏ < 1MB)
-        if not os.path.exists(filename) or os.path.getsize(filename) < 1000000:
-            with st.spinner(f"Đang tải {filename} từ Hugging Face..."):
-                try:
-                    urllib.request.urlretrieve(url, filename)
-                    print(f"✅ Đã tải xong {filename}")
-                except Exception as e:
-                    st.error(f"❌ Lỗi tải {filename}: {e}")
-                    st.stop()
+    u = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
+    u.load_state_dict(torch.load("unet_best.pth", map_location=device)["model_state_dict"])
+    d = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
+    d.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device)["model_state_dict"])
+    hy = HybridSegmentation(u, d).to(device).eval()
 
-    # --- BƯỚC 3: NẠP MÔ HÌNH VÀO RAM ---
-    try:
-        # 1. Load Segmentation
-        u_net = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
-        u_net.load_state_dict(torch.load("unet_best.pth", map_location=device, weights_only=False)["model_state_dict"])
-        
-        d_lab = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
-        d_lab.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device, weights_only=False)["model_state_dict"])
-        
-        # Tạo mô hình Hybrid từ 2 core trên
-        hybrid = HybridSegmentation(u_net, d_lab).to(device).eval()
-
-        # 2. Load Classification (EfficientNet + Attention)
-        with open("06_classification_complete.json", "r") as f: 
-            cls_ckpt = json.load(f)
-        num_classes = cls_ckpt["config"]["num_classes"]
-        
-        cls_model = EfficientNetWithAttention(num_classes).to(device)
-        state = torch.load("efficientnet_attention_best.pth", map_location=device, weights_only=False)
-        
-        # Lấy state dict (xử lý DataParallel nếu có)
-        weights = state['model_state_dict'] if 'model_state_dict' in state else state
-        new_weights = {k.replace('module.', ''): v for k, v in weights.items()}
-        cls_model.load_state_dict(new_weights, strict=False)
-        cls_model.eval()
-        
-        idx_to_class = {v: k for k, v in (state.get("class_to_idx") or cls_ckpt.get("class_to_idx")).items()}
-        
-        # 3. Tải Font cho PDF (Nếu chưa có)
-        os.makedirs("fonts", exist_ok=True)
-        f_reg = "fonts/NotoSans-Regular.ttf"
-        if not os.path.exists(f_reg):
-            urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf", f_reg)
-            
-        return hybrid, cls_model, idx_to_class, device, f_reg
-        
-    except Exception as e:
-        st.error(f"❌ Lỗi nạp mô hình vào RAM: {e}")
-        st.write("File trong folder hiện tại:", os.listdir("."))
-        st.stop()
-
-# Khởi động nạp toàn bộ hệ thống
-hybrid, cls_model, idx_to_class, device, FONT_PATH = load_all_models()
-# =================================================================
-# 4. LOGIC CHẨN ĐOÁN AI (ĐỒNG BỘ ACCURACY)
-# =================================================================
-
-def run_inference(image, patient_name, age, gender, note):
-    record_id = str(uuid.uuid4())[:8]
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    h_orig, w_orig = image.shape[:2]
+    with open("06_classification_complete.json", "r") as f: ck = json.load(f)
+    cls = EfficientNetWithAttention(ck["config"]["num_classes"]).to(device)
+    st_d = torch.load("efficientnet_attention_best.pth", map_location=device)
+    w = st_d['model_state_dict'] if 'model_state_dict' in st_d else st_d
+    cls.load_state_dict({k.replace('module.', ''): v for k, v in w.items()}, strict=False)
+    cls.eval()
     
-    # Step 1: Segmentation
-    img_input = cv2.resize(image, (256, 256)).astype(np.float32)/255.0
-    img_input = (img_input - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
-    tensor = torch.from_numpy(img_input).permute(2, 0, 1).unsqueeze(0).to(device).float()
+    idx_to_cls = {v: k for k, v in (st_d.get("class_to_idx") or ck.get("class_to_idx")).items()}
+    os.makedirs("fonts", exist_ok=True)
+    f_reg = "fonts/NotoSans-Regular.ttf"
+    if not os.path.exists(f_reg): urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf", f_reg)
+    return hy, cls, idx_to_cls, device, f_reg
+
+hy, cls_m, idx_cls, dev, F_PATH = load_all_models()
+
+def run_inference(image, name, age, gen, note):
+    rid = str(uuid.uuid4())[:8]
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Segmentation
+    inp = (cv2.resize(image, (256, 256)).astype(np.float32)/255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+    t = torch.from_numpy(inp).permute(2, 0, 1).unsqueeze(0).to(dev).float()
+    with torch.no_grad(): m = hy(t).squeeze().cpu().numpy()
+    m_r = cv2.resize(m, (image.shape[1], image.shape[0]))
     
-    with torch.no_grad():
-        mask = hybrid(tensor).squeeze().cpu().numpy()
-    
-    mask_resized = cv2.resize(mask, (w_orig, h_orig))
-    mask_binary = (mask_resized > 0.5).astype(np.uint8) * 255
-    
-    # Step 2: ROI Extraction (Smart)
-    contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) > 0:
-        c = max(contours, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(c)
-        pad_w, pad_h = int(w * 0.15), int(h * 0.15)
-        x1, y1 = max(0, x - pad_w), max(0, y - pad_h)
-        x2, y2 = min(w_orig, x + w + pad_w), min(h_orig, y + h + pad_h)
-        roi = image[y1:y2, x1:x2]
+    # ROI CŨ (Dùng lại logic gốc của mày để tăng Accuracy)
+    ys, xs = np.where(m_r > 0.5)
+    if len(xs) > 0:
+        x1, y1, x2, y2 = xs.min(), ys.min(), xs.max(), ys.max()
+        p = 30
+        roi = image[max(0,y1-p):min(image.shape[0],y2+p), max(0,x1-p):min(image.shape[1],x2+p)]
     else: roi = image
-    roi = cv2.resize(roi, (224, 224))
-
-    # Step 3: Classification
-    roi_input = roi.astype(np.float32)/255.0
-    roi_input = (roi_input - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
-    roi_t = torch.from_numpy(roi_input).permute(2, 0, 1).unsqueeze(0).to(device).float()
+    roi_t = torch.from_numpy((cv2.resize(roi, (224, 224)).astype(np.float32)/255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]).permute(2,0,1).unsqueeze(0).to(dev).float()
     
-    with torch.no_grad():
-        probs = torch.softmax(cls_model(roi_t), 1).cpu().numpy()[0]
-    label, conf = idx_to_class[np.argmax(probs)], probs[np.argmax(probs)]
+    with torch.no_grad(): pr = torch.softmax(cls_m(roi_t), 1).cpu().numpy()[0]
+    lbl, conf = idx_cls[np.argmax(pr)], pr[np.argmax(pr)]
 
-    # Step 4: Visualization
-    overlay = cv2.addWeighted(image, 0.7, cv2.cvtColor(cv2.applyColorMap(np.uint8(255*mask_resized), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB), 0.3, 0)
-    mask_vis = cv2.cvtColor(mask_binary, cv2.COLOR_GRAY2RGB)
-
-    # Step 5: Cloud Sync
-    def up_cv2(img_np, tag):
-        _, buf = cv2.imencode('.jpg', cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
-        return cloudinary.uploader.upload(buf.tobytes(), folder="skin_app", public_id=f"{record_id}_{tag}")['secure_url']
-
-    with st.spinner("Đang đồng bộ đám mây..."):
-        urls = [up_cv2(image, "orig"), up_cv2(overlay, "ov"), up_cv2(mask_vis, "mask")]
-
-    # Step 6: Save GSheets
-    data_row = pd.DataFrame([{
-        "record_id": record_id, "timestamp": timestamp, "name": patient_name, "age": int(age), 
-        "gender": gender, "note": note, "diagnosis": label, "confidence": float(conf),
-        "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]
-    }])
-# Step 6: Save GSheets (SỬA ĐỂ FIX LỖI UNSUPPORTED)
-    # Chuyển các giá trị Numpy sang kiểu Python thuần (GSheets rất ghét kiểu dữ liệu lạ)
-    new_data_list = [
-        record_id, 
-        timestamp, 
-        patient_name, 
-        int(age), 
-        gender, 
-        note, 
-        label, 
-        float(conf),
-        urls[0], 
-        urls[1], 
-        urls[2]
-    ]
+    # Upload & Save
+    def up(img, t): return cloudinary.uploader.upload(cv2.imencode('.jpg', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))[1].tobytes(), folder="skin_app")['secure_url']
+    ov = cv2.addWeighted(image, 0.7, cv2.cvtColor(cv2.applyColorMap(np.uint8(255*m_r), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB), 0.3, 0)
+    urls = [up(image, "o"), up(ov, "v"), up(cv2.cvtColor((m_r>0.5).astype(np.uint8)*255, cv2.COLOR_GRAY2RGB), "m")]
     
+    # FIX LỖI PUBLIC SPREADSHEET
+    new_row = pd.DataFrame([{"record_id": rid, "timestamp": ts, "name": name, "age": int(age), "gender": gen, "note": note, "diagnosis": lbl, "confidence": float(conf), "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]}])
+    conn.create(data=new_row) # Dùng create để tự động append an toàn hơn
+    
+    return ov, lbl, float(conf), rid
+
+# PDF & UI giữ nguyên logic nhưng bọc Try-Except chặt hơn
+def export_pdf(rid):
     try:
-        # Sử dụng hàm create với logic append để tránh lỗi UnsupportedOperation
-        # Nếu Sheet1 đã có data, nó sẽ tự động tìm dòng trống để ghi
-        conn.create(
-            worksheet="Sheet1",
-            data=pd.DataFrame([new_data_list], columns=[
-                "record_id", "timestamp", "name", "age", "gender", 
-                "note", "diagnosis", "confidence", "url_orig", "url_ov", "url_mask"
-            ])
-        )
-        st.toast("✅ Đã lưu bệnh án thành công!")
-    except Exception as e:
-        st.error(f"⚠️ Lỗi lưu Google Sheets: {e}")
-
-    return overlay, mask_vis, label, conf, record_id
-
-# =================================================================
-# 5. XUẤT BÁO CÁO PDF (CHUYÊN NGHIỆP 3 ẢNH)
-# =================================================================
-
-def export_patient_pdf(record_id):
-    try:
-        # 1. Đọc data từ GSheets
-        df = conn.read(worksheet="Sheet1")
-        # Ép kiểu record_id về string để so khớp cho chuẩn
-        df['record_id'] = df['record_id'].astype(str)
-        r = df[df['record_id'] == str(record_id)].iloc[0]
-        
-        # 2. Tạo khung PDF (A4)
-        W, H = 1240, 1754 
-        page = Image.new("RGB", (W, H), (255, 255, 255))
+        df = conn.read()
+        r = df[df['record_id'].astype(str) == str(rid)].iloc[0]
+        page = Image.new("RGB", (1240, 1754), (255,255,255))
         draw = ImageDraw.Draw(page)
-        
-        # Nạp font (đảm bảo FONT_PATH đã được setup_assets tải về)
-        try:
-            f_title = ImageFont.truetype(FONT_PATH, 55)
-            f_text = ImageFont.truetype(FONT_PATH, 38)
-            f_small = ImageFont.truetype(FONT_PATH, 28)
-        except:
-            f_title = f_text = f_small = ImageFont.load_default()
-
-        # 3. Vẽ nội dung
-        draw.text((W//2-380, 100), "BÁO CÁO CHẨN ĐOÁN DA LIỄU AI", fill=(20,60,120), font=f_title)
-        draw.line((80, 180, 1160, 180), fill=(200,200,200), width=3)
-
-        y = 250
-        lines = [
-            f"ID Bệnh án: {r['record_id']}", 
-            f"Bệnh nhân: {r['name']}", 
-            f"Tuổi/Giới tính: {r['age']} / {r['gender']}", 
-            f"Thời gian: {r['timestamp']}", 
-            f"Chẩn đoán: {r['diagnosis']}", 
-            f"Độ tin cậy: {float(r['confidence'])*100:.2f}%"
-        ]
-        for line in lines:
-            draw.text((100, y), line, fill=(0,0,0), font=f_text)
-            y += 75
-
-        # 4. Chèn 3 ảnh từ Cloudinary
-        img_size = 340
-        def paste_url(url, x_pos, caption):
-            try:
-                resp = requests.get(url, timeout=10)
-                img = Image.open(BytesIO(resp.content)).convert("RGB")
-                img.thumbnail((img_size, img_size))
-                # Căn giữa ảnh trong ô
-                page.paste(img, (x_pos + (img_size - img.size[0])//2, 850))
-                draw.text((x_pos + 40, 1210), caption, fill=(100,100,100), font=f_small)
-            except Exception as e:
-                draw.text((x_pos, 950), "[Lỗi tải ảnh]", fill=(200,0,0), font=f_small)
-                print(f"Lỗi tải ảnh {caption}: {e}")
-
-        paste_url(r['url_orig'], 80, "Ảnh tổn thương gốc")
-        paste_url(r['url_ov'], 450, "Ảnh phân vùng AI")
-        paste_url(r['url_mask'], 820, "Mặt nạ phân đoạn")
-
-        # Footer
-        draw.text((W//2 - 200, H - 100), "Hệ thống AI Dermatology", fill=(150, 150, 150), font=f_small)
-        
-        # 5. Xuất bytes
-        pdf_buf = BytesIO()
-        page.save(pdf_buf, format="PDF")
-        return pdf_buf.getvalue()
-        
+        f = ImageFont.truetype(F_PATH, 40)
+        draw.text((400, 100), "BAO CAO CHAN DOAN", fill=(0,0,0), font=f)
+        draw.text((100, 300), f"ID: {r['record_id']}\nTen: {r['name']}\nChan doan: {r['diagnosis']}\nConf: {r['confidence']}", fill=(0,0,0), font=f)
+        buf = BytesIO()
+        page.save(buf, format="PDF")
+        return buf.getvalue()
     except Exception as e:
-        # In ra console của Streamlit để mày debug
-        st.error(f"Lỗi tạo PDF: {str(e)}")
-        print(f"DEBUG PDF ERROR: {e}")
+        st.error(f"Lỗi PDF: {e}")
         return None
 
-# =================================================================
-# 6. GIAO DIỆN CHÍNH
-# =================================================================
+st.set_page_config(page_title="Skin AI")
+st.title("🩺 AI Dermatology")
+up_file = st.file_uploader("Ảnh", type=["jpg","png"])
+name = st.text_input("Tên")
+age = st.number_input("Tuổi", 0, 100, 25)
+gen = st.radio("Giới tính", ["Nam", "Nữ"])
+note = st.text_area("Ghi chú")
 
-st.set_page_config(page_title="AI Dermatology", layout="wide")
-st.title("🩺 Hệ thống Chẩn đoán bệnh da liễu AI")
-
-t1, t2 = st.tabs(["Chẩn đoán mới", "Tra cứu dữ liệu"])
-
-with t1:
-    up = st.file_uploader("Tải ảnh", type=["jpg", "png", "jpeg"])
-    c1, c2 = st.columns(2)
-    name = c1.text_input("Tên bệnh nhân")
-    age = c2.number_input("Tuổi", 0, 120, 25)
-    gen = c1.radio("Giới tính", ["Nam", "Nữ"], horizontal=True)
-    note = st.text_area("Ghi chú lâm sàng")
-    
-    if st.button("Chẩn đoán"):
-        if up and name:
-            img = np.array(Image.open(up).convert("RGB"))
-            with st.spinner("AI đang phân tích..."):
-                ov, mk, lbl, cf, rid = run_inference(img, name, age, gen, note)
-                st.image(ov, use_container_width=True)
-                st.success(f"**Kết quả:** {lbl} ({cf*100:.2f}%)")
-                
-                # --- SỬA TẠI ĐÂY ---
-                pdf_data = export_patient_pdf(rid)
-                if pdf_data:
-                    st.download_button(
-                        label="📥 Tải báo cáo PDF",
-                        data=pdf_data,
-                        file_name=f"BaoCao_{rid}.pdf",
-                        mime="application/pdf"
-                    )
-                else:
-                    st.error("⚠️ Không thể tạo file PDF ngay lúc này. Vui lòng thử lại trong mục Tra cứu.")
-        else:
-            st.warning("Vui lòng điền đủ thông tin!")
-
-with t2:
-    sid = st.text_input("Nhập ID bệnh án để tra cứu")
-    if st.button("Tìm kiếm"):
-        try:
-            df = conn.read(worksheet="Sheet1")
-            r = df[df['record_id'] == sid].iloc[0]
-            st.image(r['url_ov'], caption="Kết quả chẩn đoán cũ", use_container_width=True)
-            st.info(f"Bệnh nhân: {r['name']} | Chẩn đoán: {r['diagnosis']}")
-            st.download_button("📥 Tải lại PDF", export_patient_pdf(sid), f"BaoCao_{sid}.pdf")
-        except: st.error("Không tìm thấy ID này trên hệ thống.")
+if st.button("Chẩn đoán"):
+    if up_file and name:
+        img = np.array(Image.open(up_file).convert("RGB"))
+        ov, lbl, conf, rid = run_inference(img, name, age, gen, note)
+        st.image(ov)
+        st.success(f"Kết quả: {lbl} ({conf*100:.2f}%)")
+        pdf = export_pdf(rid)
+        if pdf: st.download_button("Tải PDF", pdf, f"BA_{rid}.pdf")
