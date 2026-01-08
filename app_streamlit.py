@@ -314,9 +314,21 @@ with t1:
             with st.spinner("AI đang phân tích..."):
                 ov, mk, lbl, cf, rid = run_inference(img, name, age, gen, note)
                 st.image(ov, use_container_width=True)
-                st.info(f"**Kết quả:** {lbl} ({cf*100:.2f}%)")
-                st.download_button("📥 Tải báo cáo PDF", export_patient_pdf(rid), f"BaoCao_{rid}.pdf")
-        else: st.warning("Vui lòng điền đủ thông tin!")
+                st.success(f"**Kết quả:** {lbl} ({cf*100:.2f}%)")
+                
+                # --- SỬA TẠI ĐÂY ---
+                pdf_data = export_patient_pdf(rid)
+                if pdf_data:
+                    st.download_button(
+                        label="📥 Tải báo cáo PDF",
+                        data=pdf_data,
+                        file_name=f"BaoCao_{rid}.pdf",
+                        mime="application/pdf"
+                    )
+                else:
+                    st.error("⚠️ Không thể tạo file PDF ngay lúc này. Vui lòng thử lại trong mục Tra cứu.")
+        else:
+            st.warning("Vui lòng điền đủ thông tin!")
 
 with t2:
     sid = st.text_input("Nhập ID bệnh án để tra cứu")
