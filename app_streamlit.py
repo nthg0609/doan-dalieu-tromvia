@@ -111,7 +111,7 @@ def load_all_models():
             with st.spinner(f"Đang tải {filename} từ Hugging Face..."):
                 try:
                     urllib.request.urlretrieve(url, filename)
-                    st.success(f"✅ Đã tải xong {filename}")
+                    print(f"✅ Đã tải xong {filename}")
                 except Exception as e:
                     st.error(f"❌ Lỗi tải {filename}: {e}")
                     st.stop()
@@ -284,7 +284,7 @@ with t1:
     gen = c1.radio("Giới tính", ["Nam", "Nữ"], horizontal=True)
     note = st.text_area("Ghi chú lâm sàng")
     
-    if st.button("Tiến hành AI Analysis"):
+    if st.button("Chẩn đoán"):
         if up and name:
             img = np.array(Image.open(up).convert("RGB"))
             with st.spinner("AI đang phân tích..."):
