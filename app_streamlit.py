@@ -256,40 +256,73 @@ def run_inference(image, patient_name, age, gender, note):
 
 def export_patient_pdf(record_id):
     try:
+        # 1. Đọc data từ GSheets
         df = conn.read(worksheet="Sheet1")
-        r = df[df['record_id'] == record_id].iloc[0]
-        W, H = 1240, 1754 # A4
+        # Ép kiểu record_id về string để so khớp cho chuẩn
+        df['record_id'] = df['record_id'].astype(str)
+        r = df[df['record_id'] == str(record_id)].iloc[0]
+        
+        # 2. Tạo khung PDF (A4)
+        W, H = 1240, 1754 
         page = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(page)
-        f_title = ImageFont.truetype(FONT_PATH, 55)
-        f_text = ImageFont.truetype(FONT_PATH, 38)
+        
+        # Nạp font (đảm bảo FONT_PATH đã được setup_assets tải về)
+        try:
+            f_title = ImageFont.truetype(FONT_PATH, 55)
+            f_text = ImageFont.truetype(FONT_PATH, 38)
+            f_small = ImageFont.truetype(FONT_PATH, 28)
+        except:
+            f_title = f_text = f_small = ImageFont.load_default()
 
+        # 3. Vẽ nội dung
         draw.text((W//2-380, 100), "BÁO CÁO CHẨN ĐOÁN DA LIỄU AI", fill=(20,60,120), font=f_title)
         draw.line((80, 180, 1160, 180), fill=(200,200,200), width=3)
 
         y = 250
-        lines = [f"ID: {r['record_id']}", f"Bệnh nhân: {r['name']}", f"Tuổi/Giới tính: {r['age']} / {r['gender']}", 
-                 f"Chẩn đoán: {r['diagnosis']}", f"Độ tin cậy: {r['confidence']*100:.2f}%", f"Ghi chú: {r['note']}"]
+        lines = [
+            f"ID Bệnh án: {r['record_id']}", 
+            f"Bệnh nhân: {r['name']}", 
+            f"Tuổi/Giới tính: {r['age']} / {r['gender']}", 
+            f"Thời gian: {r['timestamp']}", 
+            f"Chẩn đoán: {r['diagnosis']}", 
+            f"Độ tin cậy: {float(r['confidence'])*100:.2f}%"
+        ]
         for line in lines:
             draw.text((100, y), line, fill=(0,0,0), font=f_text)
             y += 75
 
-        # Dàn hàng 3 ảnh
+        # 4. Chèn 3 ảnh từ Cloudinary
         img_size = 340
-        def paste_url(url, x_pos, cap):
-            img = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
-            img.thumbnail((img_size, img_size))
-            page.paste(img, (x_pos, 850))
-            draw.text((x_pos, 1200), cap, fill=(100,100,100), font=ImageFont.truetype(FONT_PATH, 28))
+        def paste_url(url, x_pos, caption):
+            try:
+                resp = requests.get(url, timeout=10)
+                img = Image.open(BytesIO(resp.content)).convert("RGB")
+                img.thumbnail((img_size, img_size))
+                # Căn giữa ảnh trong ô
+                page.paste(img, (x_pos + (img_size - img.size[0])//2, 850))
+                draw.text((x_pos + 40, 1210), caption, fill=(100,100,100), font=f_small)
+            except Exception as e:
+                draw.text((x_pos, 950), "[Lỗi tải ảnh]", fill=(200,0,0), font=f_small)
+                print(f"Lỗi tải ảnh {caption}: {e}")
 
-        paste_url(r['url_orig'], 80, "Ảnh gốc")
-        paste_url(r['url_ov'], 450, "Ảnh phân vùng")
-        paste_url(r['url_mask'], 820, "Mặt nạ AI")
+        paste_url(r['url_orig'], 80, "Ảnh tổn thương gốc")
+        paste_url(r['url_ov'], 450, "Ảnh phân vùng AI")
+        paste_url(r['url_mask'], 820, "Mặt nạ phân đoạn")
 
-        buf = BytesIO()
-        page.save(buf, format="PDF")
-        return buf.getvalue()
-    except: return None
+        # Footer
+        draw.text((W//2 - 200, H - 100), "Hệ thống AI Dermatology", fill=(150, 150, 150), font=f_small)
+        
+        # 5. Xuất bytes
+        pdf_buf = BytesIO()
+        page.save(pdf_buf, format="PDF")
+        return pdf_buf.getvalue()
+        
+    except Exception as e:
+        # In ra console của Streamlit để mày debug
+        st.error(f"Lỗi tạo PDF: {str(e)}")
+        print(f"DEBUG PDF ERROR: {e}")
+        return None
 
 # =================================================================
 # 6. GIAO DIỆN CHÍNH
