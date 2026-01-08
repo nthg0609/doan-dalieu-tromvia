@@ -1,0 +1,39 @@
+{
+    "step": "01_prepare_and_split",
+    "status": "completed",
+    "timestamp": "2025-10-25T16:43:41.134141",
+    "datasets": {
+        "segmentation": {
+            "total": 2594,
+            "train": 1815,
+            "val": 389,
+            "test": 390,
+            "path": "/content/drive/MyDrive/DoAn_DaLieu/1_Data/processed/segmentation_data"
+        },
+        "classification": {
+            "total": 20030,
+            "train": 14021,
+            "val": 3004,
+            "test": 3005,
+            "path": "/content/drive/MyDrive/DoAn_DaLieu/1_Data/processed/classification_data",
+            "classes": [
+                "NV",
+                "MEL",
+                "BKL",
+                "DF",
+                "AKIEC",
+                "BCC",
+                "VASC"
+            ],
+            "class_distribution": {
+                "NV": 13410,
+                "MEL": 2226,
+                "BKL": 2198,
+                "BCC": 1028,
+                "AKIEC": 654,
+                "VASC": 284,
+                "DF": 230
+            }
+        }
+    }
+}

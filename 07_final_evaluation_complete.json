@@ -1,0 +1,24 @@
+{
+    "step": "07_final_evaluation",
+    "status": "completed",
+    "version": "20251109_131656",
+    "timestamp": "2025-11-09T13:16:56.511522",
+    "summary": {
+        "best_segmentation": {
+            "model": "Hybrid-Max",
+            "dice": 0.9131690774645124,
+            "iou": 0.8470193171987728
+        },
+        "classification": {
+            "test_accuracy": 96.50582362728785,
+            "best_val_accuracy": 97.50332889480693
+        }
+    },
+    "output_files": {
+        "text_report": "/content/drive/MyDrive/DoAn_DaLieu/5_Results/FINAL_REPORT.txt",
+        "excel_summary": "/content/drive/MyDrive/DoAn_DaLieu/5_Results/FINAL_REPORT.xlsx",
+        "segmentation_comparison": "/content/drive/MyDrive/DoAn_DaLieu/5_Results/segmentation_comparison.png",
+        "pipeline_performance": "/content/drive/MyDrive/DoAn_DaLieu/5_Results/pipeline_performance.png"
+    },
+    "archive_path": "/content/drive/MyDrive/DoAn_DaLieu/5_Results/archive"
+}

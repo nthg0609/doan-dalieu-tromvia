@@ -1,0 +1,25 @@
+{
+    "step": "03_deeplabv3plus_training",
+    "status": "completed",
+    "timestamp": "2025-11-25T16:58:58.767198",
+    "model": "DeepLabV3+ (ResNet50 encoder)",
+    "config": {
+        "batch_size": 16,
+        "epochs_trained": 42,
+        "early_stopping_patience": 10,
+        "optimizer": "Adam",
+        "learning_rate": 0.0001,
+        "loss": "Dice(0.6) + BCE(0.4)"
+    },
+    "results": {
+        "best_val_dice": 0.895029456615448,
+        "test_dice": 0.9127627396583557,
+        "test_iou": 0.8455234158039093,
+        "test_loss": 0.09224310591816902
+    },
+    "paths": {
+        "best_model": "deeplabv3plus_best.pth",
+        "last_checkpoint": "deeplabv3plus_last.pth",
+        "history_csv": "/content/drive/MyDrive/DoAn_DaLieu/4_Models/deeplabv3plus/training_history.csv"
+    }
+}

@@ -1,0 +1,30 @@
+{
+    "step": "04_hybrid_segmentation",
+    "status": "completed",
+    "timestamp": "2025-12-16T12:18:58.255725",
+    "models_evaluated": [
+        "U-Net",
+        "DeepLabV3+",
+        "Hybrid-Ensemble",
+        "Hybrid-Max"
+    ],
+    "best_model": "Hybrid-Max",
+    "results": {
+        "U-Net": {
+            "iou": 0.8110937500486568,
+            "dice": 0.8898527579648154
+        },
+        "DeepLabV3+": {
+            "iou": 0.843339237023373,
+            "dice": 0.9092660096226907
+        },
+        "Hybrid-Ensemble": {
+            "iou": 0.8306620333875928,
+            "dice": 0.9019744609083448
+        },
+        "Hybrid-Max": {
+            "iou": 0.8470193171987728,
+            "dice": 0.9131690774645124
+        }
+    }
+}

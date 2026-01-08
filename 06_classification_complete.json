@@ -1,0 +1,45 @@
+{
+    "step": "06_classification",
+    "status": "completed",
+    "timestamp": "2025-11-27T08:00:34.684303",
+    "model": "EfficientNet-B0 + CBAM Attention",
+    "config": {
+        "batch_size": 32,
+        "image_size": 224,
+        "epochs_trained": 37,
+        "num_classes": 7
+    },
+    "results": {
+        "best_val_acc": 96.90412782956058,
+        "test_acc": 95.40765391014975,
+        "test_loss": 0.18486375762446922
+    },
+    "paths": {
+        "best_model": "efficientnet_attention_best.pth",
+        "history_csv": "/content/drive/MyDrive/DoAn_DaLieu/4_Models/classification/training_history.csv"
+    },
+    "preprocessing": {
+        "image_size": 224,
+        "normalization": {
+            "mean": [
+                0.485,
+                0.456,
+                0.406
+            ],
+            "std": [
+                0.229,
+                0.224,
+                0.225
+            ]
+        },
+        "use_clahe": false,
+        "clahe_params": {
+            "clipLimit": 2.0,
+            "tileGridSize": [
+                8,
+                8
+            ]
+        },
+        "resize_interpolation": "LANCZOS4"
+    }
+}

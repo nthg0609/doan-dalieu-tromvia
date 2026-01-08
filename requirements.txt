@@ -1,0 +1,11 @@
+numpy<2.0.0
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
+segmentation-models-pytorch
+timm
+opencv-python-headless
+pandas
+Pillow
+requests
+cloudinary
+st-gsheets-connection

@@ -1,0 +1,12 @@
+{
+    "step": "05_roi_extraction",
+    "status": "completed",
+    "timestamp": "2025-12-13T02:52:50.475655",
+    "source_model": "Hybrid-Max",
+    "roi_data": {
+        "train": 14021,
+        "val": 3004,
+        "test": 3005,
+        "path": "/content/drive/MyDrive/DoAn_DaLieu/1_Data/processed/roi_data"
+    }
+}

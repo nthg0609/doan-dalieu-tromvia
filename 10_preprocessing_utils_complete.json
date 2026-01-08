@@ -1,0 +1,362 @@
+{
+    "file": "10_Preprocessing_Utils.ipynb",
+    "status": "complete",
+    "timestamp": "2025-12-16T11:01:22.991942",
+    "version": "1.1.0",
+    "preprocessing": {
+        "class": "PreprocessingPipeline",
+        "modules": {
+            "remove_hair": {
+                "description": "Loại bỏ lông bằng black-hat morphology + inpainting",
+                "parameters": {
+                    "kernel_size": [
+                        17,
+                        17
+                    ],
+                    "threshold": 10,
+                    "inpaint_radius": 6
+                }
+            },
+            "reduce_shadow": {
+                "description": "Giảm shadow bằng CLAHE trên LAB",
+                "parameters": {
+                    "clip_limit": 2.0,
+                    "tile_grid_size": [
+                        8,
+                        8
+                    ]
+                }
+            },
+            "smooth_skin": {
+                "description": "Làm mịn da bằng bilateral filter",
+                "parameters": {
+                    "d": 9,
+                    "sigma_color": 75,
+                    "sigma_space": 75
+                }
+            },
+            "enhance_contrast": {
+                "description": "Tăng contrast bằng CLAHE mạnh",
+                "parameters": {
+                    "clip_limit": 3.0,
+                    "tile_grid_size": [
+                        8,
+                        8
+                    ]
+                }
+            }
+        },
+        "presets": {
+            "smartphone": {
+                "description": "Ảnh smartphone:  lông tự nhiên, ánh sáng không đều, lesion nhỏ",
+                "use_cases": [
+                    "Ảnh điện thoại",
+                    "Không dermatoscope",
+                    "Ánh sáng tự nhiên"
+                ],
+                "config": {
+                    "remove_hair": true,
+                    "reduce_shadow": true,
+                    "smooth_skin": false,
+                    "enhance_contrast": false,
+                    "clip_limit": 2.0
+                },
+                "parameters": {
+                    "hair_removal": {
+                        "kernel_size": [
+                            13,
+                            13
+                        ],
+                        "threshold": 12,
+                        "inpaint_radius": 4
+                    },
+                    "shadow_reduction": {
+                        "clip_limit": 2.0,
+                        "tile_grid_size": [
+                            8,
+                            8
+                        ]
+                    }
+                }
+            },
+            "smartphone_light": {
+                "description": "Ảnh smartphone - LIGHT processing (CHỈ hair & shadow, GIỮ texture & color)",
+                "use_cases": [
+                    "Ảnh smartphone thông thường",
+                    "Medical imaging",
+                    "Ưu tiên giữ features"
+                ],
+                "config": {
+                    "remove_hair": true,
+                    "reduce_shadow": true,
+                    "smooth_skin": false,
+                    "enhance_contrast": false,
+                    "clip_limit": 2.0
+                },
+                "parameters": {
+                    "hair_removal": {
+                        "kernel_size": [
+                            13,
+                            13
+                        ],
+                        "threshold": 12,
+                        "inpaint_radius": 4
+                    },
+                    "shadow_reduction": {
+                        "clip_limit": 2.0,
+                        "tile_grid_size": [
+                            8,
+                            8
+                        ]
+                    }
+                }
+            },
+            "elderly_skin": {
+                "description": "Da người già: CHỈ xử lý lông và bóng MẠNH",
+                "use_cases": [
+                    "Bệnh nhân > 60 tuổi",
+                    "Nhiều nếp nhăn",
+                    "Age spots"
+                ],
+                "config": {
+                    "remove_hair": true,
+                    "reduce_shadow": true,
+                    "smooth_skin": false,
+                    "enhance_contrast": false,
+                    "clip_limit": 2.0
+                },
+                "parameters": {
+                    "hair_removal": {
+                        "kernel_size": [
+                            13,
+                            13
+                        ],
+                        "threshold": 12,
+                        "inpaint_radius": 4
+                    },
+                    "shadow_reduction": {
+                        "clip_limit": 2.0,
+                        "tile_grid_size": [
+                            8,
+                            8
+                        ]
+                    }
+                }
+            },
+            "clinic": {
+                "description": "Phòng khám nhỏ:  thiết bị không chuyên nghiệp",
+                "use_cases": [
+                    "Camera thường",
+                    "Ánh sáng phòng khám",
+                    "Không polarized"
+                ],
+                "config": {
+                    "remove_hair": true,
+                    "reduce_shadow": true,
+                    "smooth_skin": false,
+                    "enhance_contrast": false,
+                    "clip_limit": 1.8
+                },
+                "parameters": {
+                    "hair_removal": {
+                        "kernel_size": [
+                            13,
+                            13
+                        ],
+                        "threshold": 12,
+                        "inpaint_radius": 4
+                    },
+                    "shadow_reduction": {
+                        "clip_limit": 1.8,
+                        "tile_grid_size": [
+                            8,
+                            8
+                        ]
+                    }
+                }
+            },
+            "clean": {
+                "description": "Dermatoscope chuẩn (ISIC-like): không cần preprocessing",
+                "use_cases": [
+                    "ISIC dataset",
+                    "Dermatoscope chuyên nghiệp",
+                    "Đã chuẩn hóa"
+                ],
+                "config": {
+                    "remove_hair": false,
+                    "reduce_shadow": false,
+                    "smooth_skin": false,
+                    "enhance_contrast": false
+                },
+                "parameters": {}
+            }
+        }
+    },
+    "postprocessing": {
+        "class": "PostprocessingPipeline",
+        "modules": {
+            "fill_holes": {
+                "description": "Lấp lỗ bằng morphological closing + flood fill",
+                "parameters": {
+                    "kernel_size": [
+                        11,
+                        11
+                    ],
+                    "kernel_shape": "ELLIPSE"
+                }
+            },
+            "remove_small_objects": {
+                "description": "Loại bỏ connected components nhỏ",
+                "parameters": {
+                    "min_size": 500,
+                    "connectivity": 8
+                }
+            },
+            "smooth_boundary": {
+                "description": "Làm mịn biên bằng opening + closing",
+                "parameters": {
+                    "kernel_size": [
+                        5,
+                        5
+                    ],
+                    "kernel_shape": "ELLIPSE"
+                }
+            },
+            "select_largest": {
+                "description": "Chỉ giữ contour lớn nhất (area × solidity)",
+                "parameters": {
+                    "score_formula": "area * (0.8 + 0.2 * solidity)"
+                }
+            }
+        },
+        "presets": {
+            "noisy": {
+                "description": "Mask nhiễu:   có lỗ, age spots, biên thô",
+                "use_cases": [
+                    "Ảnh smartphone",
+                    "Ảnh da xấu",
+                    "Nhiều age spots"
+                ],
+                "config": {
+                    "fill_holes": true,
+                    "remove_small_objects": true,
+                    "smooth_boundary": true,
+                    "select_largest": true,
+                    "min_object_size": 500,
+                    "smart_mode": true,
+                    "distance_threshold": 30
+                },
+                "parameters": {
+                    "fill_holes": {
+                        "kernel_size": [
+                            11,
+                            11
+                        ],
+                        "kernel_shape": "ELLIPSE"
+                    },
+                    "remove_small": {
+                        "min_size": 500,
+                        "connectivity": 8,
+                        "min_solidity": 0.7
+                    },
+                    "smooth_boundary": {
+                        "kernel_size": [
+                            5,
+                            5
+                        ],
+                        "kernel_shape": "ELLIPSE"
+                    },
+                    "select_largest": {
+                        "score_formula": "area * (0.8 + 0.2 * solidity)",
+                        "distance_threshold": 30
+                    }
+                }
+            },
+            "clean": {
+                "description": "Mask tương đối sạch:  chỉ làm mịn biên",
+                "use_cases": [
+                    "Ảnh ISIC",
+                    "Mask đã tốt",
+                    "Không cần xử lý nhiều"
+                ],
+                "config": {
+                    "fill_holes": false,
+                    "remove_small_objects": false,
+                    "smooth_boundary": true,
+                    "select_largest": false,
+                    "min_object_size": 500,
+                    "smart_mode": false,
+                    "distance_threshold": 30
+                },
+                "parameters": {
+                    "smooth_boundary": {
+                        "kernel_size": [
+                            5,
+                            5
+                        ],
+                        "kernel_shape": "ELLIPSE"
+                    }
+                }
+            }
+        }
+    },
+    "degradation": {
+        "description": "Synthetic image degradation for testing preprocessing effectiveness",
+        "functions": [
+            "add_synthetic_hair",
+            "add_synthetic_shadow",
+            "add_synthetic_blur",
+            "add_synthetic_noise",
+            "degrade_image"
+        ],
+        "types": {
+            "smartphone": {
+                "description": "Mô phỏng ảnh smartphone: lông + bóng nhẹ + mờ",
+                "parameters": {
+                    "num_hairs": 15,
+                    "num_shadows": 2,
+                    "shadow_intensity": 0.25,
+                    "blur_amount": 2
+                }
+            },
+            "elderly": {
+                "description": "Mô phỏng da người già: bóng nặng + nhiễu",
+                "parameters": {
+                    "num_shadows": 4,
+                    "shadow_intensity": 0.35,
+                    "noise_level": 12,
+                    "num_hairs": 8
+                }
+            },
+            "clinic": {
+                "description": "Mô phỏng phòng khám:  lông nhẹ + bóng nhẹ",
+                "parameters": {
+                    "num_hairs": 10,
+                    "num_shadows": 1,
+                    "shadow_intensity": 0.18
+                }
+            }
+        },
+        "logic": "Tạo ảnh giả kém chất lượng TỪ ảnh sạch ISIC để test preprocessing"
+    },
+    "usage": {
+        "import_method": "%run",
+        "import_path": "/content/drive/MyDrive/DoAn_DaLieu/2_Notebooks/10_Preprocessing_Utils.ipynb",
+        "example_code": {
+            "preprocessing": "preprocess = get_preprocessing_preset('smartphone'); img_enhanced, _ = preprocess(image)",
+            "postprocessing": "postprocess = get_postprocessing_preset('noisy'); mask_final, _ = postprocess(mask_pred)"
+        }
+    },
+    "dependencies": {
+        "required_files": [
+            "02_UNet_Segmentation.ipynb",
+            "03_DeepLabV3Plus_Segmentation.ipynb",
+            "04_Hybrid_Segmentation.ipynb"
+        ],
+        "next_files": [
+            "04_Hybrid_Segmentation. ipynb",
+            "05_ROI_Extraction.ipynb",
+            "08_Test_New_Images.ipynb"
+        ]
+    }
+}
