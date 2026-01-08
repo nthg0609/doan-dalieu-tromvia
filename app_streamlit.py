@@ -87,57 +87,78 @@ class EfficientNetWithAttention(nn.Module):
 # 3. HÀM TẢI & NẠP MÔ HÌNH (GỘP CHUNG CHO AN TOÀN)
 # =================================================================
 
+# =================================================================
+# 4. TẢI VÀ NẠP MÔ HÌNH (SỬ DỤNG FILES_TO_DOWNLOAD TỪ HUGGING FACE)
+# =================================================================
+
 @st.cache_resource
 def load_all_models():
     import segmentation_models_pytorch as smp
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # --- TẢI FILE TỪ HUGGING FACE ---
-    HF_BASE = "https://huggingface.co/nthg0609/doan-dalieu/resolve/main"
-    MODELS_FILE = {
-        "unet_best.pth": f"{HF_BASE}/unet_best.pth",
-        "deeplabv3plus_best.pth": f"{HF_BASE}/deeplabv3plus_best.pth",
-        "efficientnet_attention_best.pth": f"{HF_BASE}/efficientnet_attention_best.pth"
+    # --- BƯỚC 1: DANH SÁCH FILES TẢI TỪ HUGGING FACE ---
+    FILES_TO_DOWNLOAD = {
+        "unet_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/unet_best.pth",
+        "deeplabv3plus_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/deeplabv3plus_best.pth",
+        "efficientnet_attention_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/efficientnet_attention_best.pth",
+        "hybrid_best.pth": "https://huggingface.co/nthg0609/doan-dalieu/resolve/main/hybrid_best.pth"
     }
 
-    for name, url in MODELS_FILE.items():
-        if not os.path.exists(name) or os.path.getsize(name) < 1000000:
-            with st.spinner(f"Đang tải {name}..."):
-                urllib.request.urlretrieve(url, name)
+    # --- BƯỚC 2: KIỂM TRA VÀ TẢI FILE ---
+    for filename, url in FILES_TO_DOWNLOAD.items():
+        # Nếu file chưa có HOẶC file bị hỏng (dung lượng quá nhỏ < 1MB)
+        if not os.path.exists(filename) or os.path.getsize(filename) < 1000000:
+            with st.spinner(f"Đang tải {filename} từ Hugging Face..."):
+                try:
+                    urllib.request.urlretrieve(url, filename)
+                    st.success(f"✅ Đã tải xong {filename}")
+                except Exception as e:
+                    st.error(f"❌ Lỗi tải {filename}: {e}")
+                    st.stop()
 
-    # --- NẠP MÔ HÌNH VÀO RAM ---
-    # 1. Load Segmentation
-    unet = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
-    unet.load_state_dict(torch.load("unet_best.pth", map_location=device)["model_state_dict"])
-    
-    deeplab = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
-    deeplab.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device)["model_state_dict"])
-    
-    hybrid = HybridSegmentation(unet, deeplab).to(device).eval()
+    # --- BƯỚC 3: NẠP MÔ HÌNH VÀO RAM ---
+    try:
+        # 1. Load Segmentation
+        u_net = smp.Unet(encoder_name="resnet34", in_channels=3, classes=1).to(device)
+        u_net.load_state_dict(torch.load("unet_best.pth", map_location=device, weights_only=False)["model_state_dict"])
+        
+        d_lab = smp.DeepLabV3Plus(encoder_name="resnet50", in_channels=3, classes=1).to(device)
+        d_lab.load_state_dict(torch.load("deeplabv3plus_best.pth", map_location=device, weights_only=False)["model_state_dict"])
+        
+        # Tạo mô hình Hybrid từ 2 core trên
+        hybrid = HybridSegmentation(u_net, d_lab).to(device).eval()
 
-    # 2. Load Classification
-    with open("06_classification_complete.json", "r") as f: cls_ckpt = json.load(f)
-    num_classes = cls_ckpt["config"]["num_classes"]
-    cls_model = EfficientNetWithAttention(num_classes).to(device)
-    
-    state = torch.load("efficientnet_attention_best.pth", map_location=device)
-    weights = state['model_state_dict'] if 'model_state_dict' in state else state
-    new_weights = {k.replace('module.', ''): v for k, v in weights.items()}
-    cls_model.load_state_dict(new_weights, strict=False)
-    cls_model.eval()
-    
-    idx_to_class = {v: k for k, v in (state.get("class_to_idx") or cls_ckpt.get("class_to_idx")).items()}
-    
-    # 3. Font Tiếng Việt
-    os.makedirs("fonts", exist_ok=True)
-    f_reg = "fonts/NotoSans-Regular.ttf"
-    if not os.path.exists(f_reg):
-        urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf", f_reg)
-    
-    return hybrid, cls_model, idx_to_class, device, f_reg
+        # 2. Load Classification (EfficientNet + Attention)
+        with open("06_classification_complete.json", "r") as f: 
+            cls_ckpt = json.load(f)
+        num_classes = cls_ckpt["config"]["num_classes"]
+        
+        cls_model = EfficientNetWithAttention(num_classes).to(device)
+        state = torch.load("efficientnet_attention_best.pth", map_location=device, weights_only=False)
+        
+        # Lấy state dict (xử lý DataParallel nếu có)
+        weights = state['model_state_dict'] if 'model_state_dict' in state else state
+        new_weights = {k.replace('module.', ''): v for k, v in weights.items()}
+        cls_model.load_state_dict(new_weights, strict=False)
+        cls_model.eval()
+        
+        idx_to_class = {v: k for k, v in (state.get("class_to_idx") or cls_ckpt.get("class_to_idx")).items()}
+        
+        # 3. Tải Font cho PDF (Nếu chưa có)
+        os.makedirs("fonts", exist_ok=True)
+        f_reg = "fonts/NotoSans-Regular.ttf"
+        if not os.path.exists(f_reg):
+            urllib.request.urlretrieve("https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf", f_reg)
+            
+        return hybrid, cls_model, idx_to_class, device, f_reg
+        
+    except Exception as e:
+        st.error(f"❌ Lỗi nạp mô hình vào RAM: {e}")
+        st.write("File trong folder hiện tại:", os.listdir("."))
+        st.stop()
 
+# Khởi động nạp toàn bộ hệ thống
 hybrid, cls_model, idx_to_class, device, FONT_PATH = load_all_models()
-
 # =================================================================
 # 4. LOGIC CHẨN ĐOÁN AI (ĐỒNG BỘ ACCURACY)
 # =================================================================
