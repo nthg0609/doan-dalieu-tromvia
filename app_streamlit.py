@@ -218,11 +218,35 @@ def run_inference(image, patient_name, age, gender, note):
         "gender": gender, "note": note, "diagnosis": label, "confidence": float(conf),
         "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]
     }])
+# Step 6: Save GSheets (SỬA ĐỂ FIX LỖI UNSUPPORTED)
+    # Chuyển các giá trị Numpy sang kiểu Python thuần (GSheets rất ghét kiểu dữ liệu lạ)
+    new_data_list = [
+        record_id, 
+        timestamp, 
+        patient_name, 
+        int(age), 
+        gender, 
+        note, 
+        label, 
+        float(conf),
+        urls[0], 
+        urls[1], 
+        urls[2]
+    ]
+    
     try:
-        existing = conn.read(worksheet="Sheet1")
-        conn.update(worksheet="Sheet1", data=pd.concat([existing, data_row], ignore_index=True))
-    except:
-        conn.update(worksheet="Sheet1", data=data_row)
+        # Sử dụng hàm create với logic append để tránh lỗi UnsupportedOperation
+        # Nếu Sheet1 đã có data, nó sẽ tự động tìm dòng trống để ghi
+        conn.create(
+            worksheet="Sheet1",
+            data=pd.DataFrame([new_data_list], columns=[
+                "record_id", "timestamp", "name", "age", "gender", 
+                "note", "diagnosis", "confidence", "url_orig", "url_ov", "url_mask"
+            ])
+        )
+        st.toast("✅ Đã lưu bệnh án thành công!")
+    except Exception as e:
+        st.error(f"⚠️ Lỗi lưu Google Sheets: {e}")
 
     return overlay, mask_vis, label, conf, record_id
 
