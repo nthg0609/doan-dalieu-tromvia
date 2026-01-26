@@ -209,9 +209,7 @@ note = st.text_area("Ghi chú")
 
 if st.button("Chẩn đoán"):
     if up_file and name:
-        img_pil = Image.open(up).convert("RGB")
-        img = np.array(img_pil)
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img = np.array(Image.open(up_file).convert("RGB"))
         ov, lbl, conf, rid = run_inference(img, name, age, gen, note)
         st.image(ov)
         st.success(f"Kết quả: {lbl} ({conf*100:.2f}%)")
