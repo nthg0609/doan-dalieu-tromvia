@@ -15,7 +15,52 @@ from PIL import Image, ImageDraw, ImageFont
 from streamlit_gsheets import GSheetsConnection
 import cloudinary
 import cloudinary.uploader
+import gspread
+from google.oauth2.service_account import Credentials
+import gspread
+from google.oauth2.service_account import Credentials
 
+def save_data_direct(data_dict):
+    """
+    Hàm này lấy thông tin từ [connections.gsheets] để ghi bằng gspread
+    Khắc phục hoàn toàn lỗi UnsupportedOperationError
+    """
+    try:
+        # 1. Lấy thông tin xác thực từ cấu trúc secret hiện tại của bạn
+        # Lưu ý: Truy cập đúng vào st.secrets["connections"]["gsheets"]
+        secrets = st.secrets["connections"]["gsheets"]
+        
+        # 2. Tạo kết nối trực tiếp (Bỏ qua st.connection)
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_info(secrets["service_account"], scopes=scope)
+        client = gspread.authorize(creds)
+        
+        # 3. Mở file Sheet và ghi
+        sheet_url = secrets["spreadsheet"]
+        sheet = client.open_by_url(sheet_url).worksheet("Sheet1")
+        
+        # 4. Chuyển dữ liệu từ Dict sang List (Đúng thứ tự cột)
+        row_values = [
+            data_dict["record_id"],
+            data_dict["timestamp"],
+            data_dict["name"],
+            data_dict["age"],
+            data_dict["gender"],
+            data_dict["note"],
+            data_dict["diagnosis"],
+            data_dict["confidence"],
+            data_dict["url_orig"],
+            data_dict["url_ov"],
+            data_dict["url_mask"]
+        ]
+        
+        # 5. Ghi vào dòng cuối cùng
+        sheet.append_row(row_values)
+        return True
+        
+    except Exception as e:
+        st.error(f"Lỗi khi lưu Google Sheets: {e}")
+        return False
 # =================================================================
 # CẤU HÌNH & LOAD MODEL (KHÔNG ĐỔI KIẾN TRÚC)
 # =================================================================

@@ -9,3 +9,5 @@ Pillow
 requests
 cloudinary
 st-gsheets-connection
+gspread
+google-auth
