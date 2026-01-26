@@ -155,22 +155,30 @@ def run_inference(image, name, age, gen, note):
     
     # FIX LỖI PUBLIC SPREADSHEET 
     # 4. Save Sheets (SỬA LẠI ĐOẠN NÀY)
-    new_row = pd.DataFrame([{"record_id": rid, "timestamp": ts, "name": name, "age": int(age), "gender": gen, "note": note, "diagnosis": lbl, "confidence": float(conf), "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]}])
+  
     
-    # --- BẮT ĐẦU ĐOẠN SỬA ---
-    try:
-        # Đọc dữ liệu cũ về (ttl=0 để không bị cache)
-        existing_data = conn.read(worksheet="Sheet1", ttl=0)
-        # Nối dòng mới vào
-        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-        # Ghi đè lại toàn bộ (Luôn thành công nếu có quyền Editor)
-        conn.update(worksheet="Sheet1", data=updated_df)
-    except Exception as e:
-        # Trường hợp Sheet đang trắng tinh chưa có gì thì ghi dòng đầu tiên vào
-        conn.update(worksheet="Sheet1", data=new_row)
-    # --- KẾT THÚC ĐOẠN SỬA ---
+# 4. Save Sheets (SỬA LẠI: Dùng hàm save_data_direct)
+    
+    # Tạo Dictionary dữ liệu (Lưu ý: Không tạo DataFrame)
+    data_dict = {
+        "record_id": rid, 
+        "timestamp": ts, 
+        "name": name, 
+        "age": int(age), 
+        "gender": gen, 
+        "note": note, 
+        "diagnosis": lbl, 
+        "confidence": float(conf), 
+        "url_orig": urls[0], 
+        "url_ov": urls[1], 
+        "url_mask": urls[2]
+    }
 
-    # conn.create(data=new_row)  <-- XÓA DÒNG NÀY ĐI NHÉ
+    # Gọi hàm 'bất tử' save_data_direct bạn đã viết ở trên
+    if save_data_direct(data_dict):
+        st.success("✅ Đã lưu kết quả vào CSDL thành công!")
+    else:
+        st.warning("⚠️ Lưu thất bại (Vui lòng kiểm tra log), nhưng chẩn đoán vẫn hoàn tất.")
     
     return ov, lbl, float(conf), rid
 
