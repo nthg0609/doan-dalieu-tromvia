@@ -108,9 +108,24 @@ def run_inference(image, name, age, gen, note):
     ov = cv2.addWeighted(image, 0.7, cv2.cvtColor(cv2.applyColorMap(np.uint8(255*m_r), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB), 0.3, 0)
     urls = [up(image, "o"), up(ov, "v"), up(cv2.cvtColor((m_r>0.5).astype(np.uint8)*255, cv2.COLOR_GRAY2RGB), "m")]
     
-    # FIX LỖI PUBLIC SPREADSHEET
+    # FIX LỖI PUBLIC SPREADSHEET 
+    # 4. Save Sheets (SỬA LẠI ĐOẠN NÀY)
     new_row = pd.DataFrame([{"record_id": rid, "timestamp": ts, "name": name, "age": int(age), "gender": gen, "note": note, "diagnosis": lbl, "confidence": float(conf), "url_orig": urls[0], "url_ov": urls[1], "url_mask": urls[2]}])
-    conn.create(data=new_row) # Dùng create để tự động append an toàn hơn
+    
+    # --- BẮT ĐẦU ĐOẠN SỬA ---
+    try:
+        # Đọc dữ liệu cũ về (ttl=0 để không bị cache)
+        existing_data = conn.read(worksheet="Sheet1", ttl=0)
+        # Nối dòng mới vào
+        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+        # Ghi đè lại toàn bộ (Luôn thành công nếu có quyền Editor)
+        conn.update(worksheet="Sheet1", data=updated_df)
+    except Exception as e:
+        # Trường hợp Sheet đang trắng tinh chưa có gì thì ghi dòng đầu tiên vào
+        conn.update(worksheet="Sheet1", data=new_row)
+    # --- KẾT THÚC ĐOẠN SỬA ---
+
+    # conn.create(data=new_row)  <-- XÓA DÒNG NÀY ĐI NHÉ
     
     return ov, lbl, float(conf), rid
 
